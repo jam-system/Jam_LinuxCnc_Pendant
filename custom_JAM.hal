@@ -1,0 +1,2 @@
+loadusr -W ./jamcnccont remora-ec500.ini
+#loadusr -W ./manualmatic remora-ec500.ini

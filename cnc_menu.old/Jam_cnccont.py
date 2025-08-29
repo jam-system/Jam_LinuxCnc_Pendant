@@ -7,14 +7,23 @@ import time
 import threading
 import re
 import subprocess
+
 from dataclasses import dataclass
 
 # https://github.com/LinuxCNC/linuxcnc/issues/2273#issuecomment-1398532401
 from qtvcp import logger
 LOG = logger.initBaseLogger('JAMCNCCONT', log_file=None, log_level=logger.DEBUG)
 
+@dataclass
+class Message:
+    command: str      # 1 char
+    parameter: str    # 1 char
+    data: str         # Variable payload (ASCII string or number)
 
 
+import serial
+from dataclasses import dataclass
+import time
 
 @dataclass
 class Message:
@@ -56,7 +65,6 @@ class SerialFramer:
                 self._connect()
 
     def poll(self) -> Message | None:
-        
         if not self.is_connected():
             return None
 
@@ -127,11 +135,29 @@ class SerialFramer:
     def _contains_control_chars(self, s: str) -> bool:
         return any(ord(ch) < 0x20 and ch not in '\n\r' for ch in s)
 
-
+print("DEBUG A: SerialFramer =", SerialFramer)
 
 
 # #########################################################
 
+# #########################################################
+# Called every pollRate seconds to compare the current linuxcnc
+# state with sent state and write changes to the serial port
+# #TODO Investigate https://www.linuxcnc.org/docs/html/gui/GStat.html
+def poll(self):
+    # update linuxcnc state
+    self.ls.poll()
+
+    # Compare and send
+    if (self.task_state != self.ls.task_state):
+      #LOG.debug('task state changed", self.ls.task_state)
+      # linuxcnc.STATE_ESTOP: 1, STATE_ESTOP_RESET: 2, STATE_ON: 4
+      # STATE_OFF: 3? Appears to not be used
+      self.resetState()
+
+    # Skip anything that is not required when machine is not on
+    #if ( self.ls.task_state == self.linuxcnc.STATE_ON ):
+# #########################################################
 
 class Jamcnccont:
      # Used to feed back running, paused or stopped state for auto 
@@ -193,17 +219,15 @@ class Jamcnccont:
         self.hal = _hal
         self.mmc = _mmc
         self.serialF = _framer('/dev/ttyUSB0', baudrate=115200)
-        self.prev = [0.0, 0.0, 0.0]  # X,Y,Z
-        
         # print("TEST", type(self.serialF))
         # print("Is method:", callable(self.serialF.is_connected))
         # print("Method object:", self.serialF.is_connected)
 
-        # print("serialF instance:", self.serialF)
-        # print("type(serialF):", type(self.serialF))
-        # print("dir(serialF):", dir(self.serialF))
-        # print("is_connected:", self.serialF.is_connected)
-        # print("CALLING is_connected():", self.serialF.is_connected())  # <-- THIS is where it should fail if broken
+        print("serialF instance:", self.serialF)
+        print("type(serialF):", type(self.serialF))
+        print("dir(serialF):", dir(self.serialF))
+        print("is_connected:", self.serialF.is_connected)
+        print("CALLING is_connected():", self.serialF.is_connected())  # <-- THIS is where it should fail if broken
 # #########################################################
     # Initialise or reset the state of the pendant
     def resetState(self):
@@ -226,135 +250,7 @@ class Jamcnccont:
     #     LOG.debug('g92_offset ', format(i), ': ', format(self.ls.g92_offset[i]))
     #  #   LOG.debug('tool_offset ', format(i), ': ', format(self.ls.tool_offset[i]))
 
-    # #########################################################
-    # Process command
-    # 
-    #     
-    # #########################################################
-    # Called if a valid message is received
-
-
-
-
-    def debug_positions_xyz(self):
-        """
-        Print a detailed position/offset report for X, Y, Z.
-
-        Columns:
-        - USER_CMD  : self.ls.position (commanded, with offsets)
-        - USER_ACT  : self.ls.actual_position (feedback, with offsets — what the DRO shows)
-        - MACHINE   : self.ls.joint_actual_position (raw G53 machine coords)
-        - G54/G5x   : self.ls.g5x_offset (active work offset; G54..G59.x)
-        - G92       : self.ls.g92_offset
-        - TOOL      : self.ls.tool_offset
-        - USER_CALC : MACHINE - G5x - G92 - TOOL (should match USER_ACT)
-        - Δ(DRO-calc): USER_ACT - USER_CALC (numerical sanity check)
-        """
     
-        self.ls.poll()
-
-        # Axis indices for X,Y,Z (0,1,2). If the machine has fewer axes, it’ll skip missing oneself.ls.
-        axes = [(0,"X"), (1,"Y"), (2,"Z")]
-        njoints = self.ls.joints
-
-        print("\n=== LinuxCNC Position Debug (XYZ) ===")
-        print(f"Active CS index (0=G54): {self.ls.g5x_index}")
-        print(" Axis |   USER_CMD   USER_ACT   MACHINE     G54/G5x       G92        TOOL     USER_CALC  Δ(DRO-calc)")
-        print("------+----------------------------------------------------------------------------------------------")
-
-        for idx, letter in axes:
-            if idx >= njoints:
-                continue
-
-            user_cmd = self.ls.position[idx]
-            user_act = self.ls.actual_position[idx]
-            mach     = self.ls.joint_actual_position[idx]
-            g5x      = self.ls.g5x_offset[idx]
-            g92      = self.ls.g92_offset[idx]
-            tool     = self.ls.tool_offset[idx]
-
-            user_calc = mach - g5x - g92 - tool
-            delta     = user_act - user_calc
-
-            print(f"  {letter:>2}  | "
-                f"{user_cmd:10.4f} {user_act:10.4f} {mach:10.4f} "
-                f"{g5x:10.4f} {g92:10.4f} {tool:10.4f} "
-                f"{user_calc:10.4f} {delta:10.6f}")
-
-        print("Notes:")
-        print("  USER_CMD/USER_ACT include all active offsets (G54.., G92) and tool length.")
-        print("  MACHINE is raw G53 joint/machine coords.")
-        print("  USER_CALC should numerically match USER_ACT (Δ near 0).")
-
-
-
-
-
-
-
-    def processCmd(self, cmd, param, payload):
-        
-        #Home All cmd
-        if ( cmd == 'H'):
-            # Kick off "Home All" (uses HOME_SEQUENCE in the INI)
-            # homing is a manual-mode, joint-mode action
-            self.lc.mode(self.linuxcnc.MODE_MANUAL)
-            self.lc.wait_complete()
-
-            # make sure we are in joint mode
-            self.lc.teleop_enable(0)  #  go to joint mode
-            self.lc.wait_complete()
-
-            # now it's legal to home all
-            self.lc.home(-1)   # home all according to HOME_SEQUENCE
-            self.lc.wait_complete()
-
-        elif ( cmd == 'J'):
-            # Make sure machine is out of estop and on
-            # c.state(linuxcnc.STATE_ESTOP_RESET)
-            # c.state(linuxcnc.STATE_ON)
-
-            # Jogging only works in MANUAL mode
-            # self.lc.mode(self.linuxcnc.MODE_MANUAL)
-            # self.lc.wait_complete()
-
-            if (self.ls.motion_mode != self.linuxcnc.TRAJ_MODE_TELEOP):
-                print("Enabling teleop mode for jogging")
-                self.lc.teleop_enable(True)
-                self.lc.wait_complete()
-
-            velocity = 10.0 # units/sec, limited by INI settings
-            distance = 0.10  # units (for incremental jog)
-
-            # --- incremental jog (move a fixed distance then stop automatically) ---
-            self.lc.jog(self.linuxcnc.JOG_INCREMENT, False, int(param), velocity, float(payload))
-            self.lc.wait_complete()
-
-
-        elif ( cmd == 'Z'):
-            # Set the current position of the specified axis to zero
-            
-
-            # Prepare the interpreter
-            self.lc.mode(self.linuxcnc.MODE_MDI)
-            self.lc.wait_complete()
-
-            # Send the G-code as an MDI command
-            if param == 'X':
-                self.lc.mdi("G10 L20 P1 X0")
-            elif param == 'Y':
-                self.lc.mdi("G10 L20 P1 Y0")
-            elif param == 'Z':
-                self.lc.mdi("G10 L20 P1 Z0")
-               
-               
-            self.lc.wait_complete()
-
-            self.lc.mode(self.linuxcnc.MODE_MANUAL)
-            self.lc.wait_complete()
-
-        elif ( cmd == 'd'):
-            self.debug_positions_xyz()
 
     # #########################################################
     # Called every pollRate seconds to compare the current linuxcnc
@@ -363,74 +259,27 @@ class Jamcnccont:
     def poll(self):
         # update linuxcnc state
         self.ls.poll()
-
-        self.watch_user_calc_xyz()
-
-        
-
-
-
-    def watch_user_calc_xyz(self):
-        """
-        Continuously print USER_CALC for X/Y/Z *only when it changes*.
-
-        USER_CALC = joint_actual_position - g5x_offset - g92_offset - tool_offset
-
-        Args:
-        min_delta  : minimum change (in machine units) to trigger a print
-        poll_hz    : how many polls per second
-        print_initial : print one line with the starting values
-        """
-        min_delta=0.001
-
-        # Initial read
-        #vals = [user_calc(0), user_calc(1), user_calc(2)]
-        #prev = vals[:]
-
-        # track previous values (None = not seen yet)
-       
-
-        def user_calc(axis):
-            mach = self.ls.joint_actual_position[axis]
-            return mach - self.ls.g5x_offset[axis] - self.ls.g92_offset[axis] - self.ls.tool_offset[axis]
-
-        
-        # Initial read
-        # vals = [user_calc(0), user_calc(1), user_calc(2)]
-        # if print_initial:
-        # print("Watching USER_CALC (X/Y/Z). Threshold =", min_delta)
-        #     print(f"X={vals[0]:.4f}  Y={vals[1]:.4f}  Z={vals[2]:.4f}")
-        # prev = vals[:]
+    
+        # Compare and send
+        # if (self.task_state != self.ls.task_state):
+        #     LOG.debug("task state changed", self.ls.task_state)
+        #     # linuxcnc.STATE_ESTOP: 1, STATE_ESTOP_RESET: 2, STATE_ON: 4
+        #     # STATE_OFF: 3? Appears to not be used
+        #     self.resetState()
 
 
-        x = user_calc(0)
-        y = user_calc(1)
-        z = user_calc(2)
 
-   
-        # print("Checking X change...")
-        # print( "X:", x)
-        # print( "abs:", abs(x))
-        # print("prev:", self.prev[0])
+        actual = self.ls.position
+        current = actual[:3]  # X, Y, Z
 
-        if abs(x - self.prev[0]) >= min_delta:
-            self.prev[0] = x
-            self.serialF.send_message('P', '0', f"{x:.3f}")
-        if abs(y - self.prev[1]) >= min_delta:
-            self.serialF.send_message('P', '1', f"{y:.3f}")
-            self.prev[1] = y
-        if abs(z - self.prev[2]) >= min_delta:
-            self.serialF.send_message('P', '2', f"{z:.3f}")
-            self.prev[2] = z
-
- 
+        for i, axis in enumerate(['X', 'Y', 'Z']):
+            if self.previous[i] is None or abs(current[i] - self.previous[i]) > self.tolerance:
+                print(f"{axis}: {current[i]:.4f}")
+                self.previous[i] = current[i]
 
 
 
 
-
-
- 
     # #########################################################
     # Run the loop to check incoming serial data and
     # linuxcnc state every pollRate seconds
@@ -439,19 +288,16 @@ class Jamcnccont:
     # poll every nth read? or rather, read every pollRate/nth
     def run(self):
         while self.running:
-
             if self.serialF.is_connected():
                 msg = self.serialF.poll()
                 if msg:
                     print(f"Received: {msg.command} {msg.parameter} {msg.data}")
-                    self.processCmd(    msg.command, msg.parameter, msg.data)
-
                 self.poll()  # Update the state based on the latest data
-            else:
-                self.serialF.try_reconnect()
-                #print("Waiting for connection...")
-                self.ls.poll()
-                time.sleep(0.24)
+        else:
+            self.serialF.try_reconnect()
+            print("Waiting for connection...")
+            self.ls.poll()
+            time.sleep(0.24)
             
 
     def isRunning(self):
@@ -469,7 +315,8 @@ class Jamcnccont:
     # Start running in the current thread
     def start(self):
         LOG.debug("Starting Jamcnccont...")
+        self.serialF = SerialFramer
         self.running = True
         self.run()
 
-
+print("DEBUG B: SerialFramer =", SerialFramer)

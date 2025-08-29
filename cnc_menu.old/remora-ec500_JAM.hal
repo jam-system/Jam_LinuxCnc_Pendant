@@ -1,0 +1,183 @@
+# Basic HAL config file for NVEM controller board running Remora firmware
+# Configured for 3 joints (A, Y, Z axes) with home and limit switches
+
+loadrt [KINS]KINEMATICS
+loadrt [EMCMOT]EMCMOT base_period_nsec=[EMCMOT]BASE_PERIOD servo_period_nsec=[EMCMOT]SERVO_PERIOD num_joints=[KINS]JOINTS
+
+# load the Remora real-time component
+
+	loadrt remora-eth-3.0 PRU_base_freq=500000
+
+# estop and SPI comms enable and feedback
+
+	net user-enable-out		<= iocontrol.0.user-enable-out		=> remora.enable
+	net user-request-enable <= iocontrol.0.user-request-enable	=> remora.reset
+	net remora-status 		<= remora.status 				=> iocontrol.0.emc-enable-in
+
+
+# add the remora and motion functions to threads
+
+	addf remora.read 			servo-thread
+	addf motion-command-handler servo-thread
+	addf motion-controller 		servo-thread
+	addf remora.update-freq 	servo-thread
+	addf remora.write 			servo-thread
+
+#++++++++++++++++++++++++++++++++++++
+
+# external output signals
+
+# --- SPINDLE-ENABLE ---
+##setp [HMOT](CARD0).gpio.012.is_output true
+net spindle-enable  =>   remora.output.01
+##setp [HMOT](CARD0).gpio.012.invert_output true
+
+# --- 74HC540-IS-ENABLED ---
+##setp [HMOT](CARD0).gpio.000.is_output true
+##net machine-is-enabled  =>     [HMOT](CARD0).gpio.000.out
+##setp [HMOT](CARD0).gpio.000.invert_output true
+
+# --- MACHINE-IS-ENABLED ---
+##setp [HMOT](CARD0).gpio.013.is_output true
+##setp [HMOT](CARD0).gpio.013.invert_output true
+##net machine-is-enabled  =>    remora.output.07
+
+# ---setup spindle control signals---
+
+# net spindle-vel-cmd-rps        <=  spindle.0.speed-out-rps
+# net spindle-vel-cmd-rps-abs    <=  spindle.0.speed-out-rps-abs
+# net spindle-vel-cmd-rpm        <=  spindle.0.speed-out
+# net spindle-vel-cmd-rpm-abs    <=  spindle.0.speed-out-abs
+net spindle-enable             <=  spindle.0.on
+# net spindle-cw                 <=  spindle.0.forward
+# net spindle-ccw                <=  spindle.0.reverse
+# net spindle-brake              <=  spindle.0.brake
+
+
+#  ---motion control signals---
+
+net in-position               <=  motion.in-position
+net machine-is-enabled        <=  motion.motion-enabled
+
+#++++++++++++++++++++++++++++++++++++
+
+# external input signals
+
+# --- MIN-HOME-X ---
+net min-home-x     <= remora.input.06    #IN03
+
+# --- MIN-HOME-Y ---
+net min-home-y     <=  remora.input.07    #IN04
+
+# --- MAX-HOME-Z ---
+net max-home-z     <=  remora.input.08    #IN05
+
+
+
+# ---setup home / limit switch signals---
+
+net min-home-x     =>  joint.0.home-sw-in
+net min-home-x     =>  joint.0.neg-lim-sw-in
+net x-pos-limit     =>  joint.0.pos-lim-sw-in
+
+net min-home-y     =>  joint.1.home-sw-in
+net min-home-y     =>  joint.1.neg-lim-sw-in
+net y-pos-limit     =>  joint.1.pos-lim-sw-in
+
+net max-home-z     =>  joint.2.home-sw-in
+net z-neg-limit     =>  joint.2.neg-lim-sw-in
+net max-home-z     =>  joint.2.pos-lim-sw-in
+#+++++++++++++++++++++++++++++++++++++++++++++++
+
+# joint 0 setup (X axis)
+
+	setp remora.joint.0.scale 		[JOINT_0]SCALE
+	setp remora.joint.0.maxaccel 	[JOINT_0]STEPGEN_MAXACCEL
+
+	net j0pos-cmd 		joint.0.motor-pos-cmd 	=> remora.joint.0.pos-cmd
+	net j0pos-fb 		remora.joint.0.pos-fb 	=> joint.0.motor-pos-fb
+	net j0enable 		joint.0.amp-enable-out 	=> remora.joint.0.enable
+
+
+# joint 1 setup (Y axis)
+
+	setp remora.joint.1.scale 		[JOINT_1]SCALE
+	setp remora.joint.1.maxaccel 	[JOINT_1]STEPGEN_MAXACCEL
+
+	net j1pos-cmd 		joint.1.motor-pos-cmd 	=> remora.joint.1.pos-cmd
+	net j1pos-fb 		remora.joint.1.pos-fb 	=> joint.1.motor-pos-fb
+	net j1enable 		joint.1.amp-enable-out 	=> remora.joint.1.enable
+
+
+# joint 2 setup (Z axis)
+
+	setp remora.joint.2.scale [JOINT_2]SCALE
+	setp remora.joint.2.maxaccel [JOINT_2]STEPGEN_MAXACCEL
+
+	net j2pos-cmd 		joint.2.motor-pos-cmd 	=> remora.joint.2.pos-cmd
+	net j2pos-fb 		remora.joint.2.pos-fb 	=> joint.2.motor-pos-fb
+	net j2enable 		joint.2.amp-enable-out 	=> remora.joint.2.enable
+	
+	
+	
+	
+#  ---HALUI signals---
+
+net axis-select-x  halui.axis.x.select
+net jog-x-pos      halui.axis.x.plus
+net jog-x-neg      halui.axis.x.minus
+net jog-x-analog   halui.axis.x.analog
+net x-is-homed     halui.joint.0.is-homed
+net axis-select-y  halui.axis.y.select
+net jog-y-pos      halui.axis.y.plus
+net jog-y-neg      halui.axis.y.minus
+net jog-y-analog   halui.axis.y.analog
+net y-is-homed     halui.joint.1.is-homed
+net axis-select-z  halui.axis.z.select
+net jog-z-pos      halui.axis.z.plus
+net jog-z-neg      halui.axis.z.minus
+net jog-z-analog   halui.axis.z.analog
+net z-is-homed     halui.joint.2.is-homed
+net jog-selected-pos      halui.axis.selected.plus
+net jog-selected-neg      halui.axis.selected.minus
+net spindle-manual-cw     halui.spindle.0.forward
+net spindle-manual-ccw    halui.spindle.0.reverse
+net spindle-manual-stop   halui.spindle.0.stop
+net machine-is-on         halui.machine.is-on
+net jog-speed             halui.axis.jog-speed
+net MDI-mode              halui.mode.is-mdi
+
+net jog-z-analog   halui.axis.z.analog
+net z-is-homed     halui.joint.2.is-homed
+net jog-selected-pos      halui.axis.selected.plus
+net jog-selected-neg      halui.axis.selected.minus
+net spindle-manual-cw     halui.spindle.0.forward
+net spindle-manual-ccw    halui.spindle.0.reverse
+net spindle-manual-stop   halui.spindle.0.stop
+net machine-is-on         halui.machine.is-on	
+
+
+#Spindle Control 0V-10V Analog (working with 24K Spindle) At 12K getting 4.96V at 24K getting 9.77V
+
+##net spindle-cw remora.output.5
+loadrt pwmgen output_type=1
+loadrt scale count=1
+loadrt lowpass count=1
+loadrt abs count=1
+addf scale.0 servo-thread
+addf lowpass.0 servo-thread
+addf abs.0 servo-thread
+setp scale.0.gain 0.00416666667
+net spindle-cmd-rpm spindle.0.speed-out => scale.0.in
+net spindle-cmd-rpm-abs scale.0.out => abs.0.in
+net spindle-speed-DAC abs.0.out => remora.SP.0
+net spindle-cw <= spindle.0.forward
+
+#  ---manual tool change signals---
+
+loadusr -W hal_manualtoolchange
+net tool-change-request     iocontrol.0.tool-change       =>  hal_manualtoolchange.change
+net tool-change-confirmed   iocontrol.0.tool-changed      <=  hal_manualtoolchange.changed
+net tool-number             iocontrol.0.tool-prep-number  =>  hal_manualtoolchange.number
+net tool-prepare-loopback   iocontrol.0.tool-prepare      =>  iocontrol.0.tool-prepared
+
