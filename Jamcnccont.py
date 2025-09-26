@@ -192,8 +192,11 @@ class Jamcnccont:
         self.lc = self.linuxcnc.command()
         self.hal = _hal
         self.mmc = _mmc
-        self.serialF = _framer('/dev/ttyUSB0', baudrate=115200)
+        #self.serialF = _framer('/dev/ttyUSB0', baudrate=115200)
+        self.serialF = _framer('/dev/ttyACM0', baudrate=115200)
         self.prev = [0.0, 0.0, 0.0]  # X,Y,Z
+        self.sendDelayCounter   = 0
+        self.sendDelayCounterMax = 6000  # send every nth change
         
         # print("TEST", type(self.serialF))
         # print("Is method:", callable(self.serialF.is_connected))
@@ -216,7 +219,7 @@ class Jamcnccont:
         y = actual[1]
         z = actual[2]
 
-        print(f"X: {x:.3f}, Y: {y:.3f}, Z: {z:.3f}")
+        # print(f"X: {x:.3f}, Y: {y:.3f}, Z: {z:.3f}")
 
     # #########################################################
     # # Used for debug
@@ -381,6 +384,13 @@ class Jamcnccont:
         poll_hz    : how many polls per second
         print_initial : print one line with the starting values
         """
+
+        if self.sendDelayCounter < self.sendDelayCounterMax:
+            self.sendDelayCounter += 1
+            return
+        
+        self.sendDelayCounter = 0
+
         min_delta=0.001
 
         # Initial read
@@ -447,6 +457,7 @@ class Jamcnccont:
                     self.processCmd(    msg.command, msg.parameter, msg.data)
 
                 self.poll()  # Update the state based on the latest data
+                #time.sleep(0.1)
             else:
                 self.serialF.try_reconnect()
                 #print("Waiting for connection...")
